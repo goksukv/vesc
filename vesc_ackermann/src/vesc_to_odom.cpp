@@ -36,7 +36,7 @@ VescToOdom::VescToOdom(ros::NodeHandle nh, ros::NodeHandle private_nh) :
   private_nh.param("publish_tf", publish_tf_, publish_tf_);
 
   // create odom publisher
-  odom_pub_ = nh.advertise<nav_msgs::Odometry>("odom", 10);
+  odom_pub_ = nh.advertise<nav_msgs::Odometry>("wheel_odom", 10);
 
   // create tf broadcaster
   if (publish_tf_) {
@@ -53,18 +53,52 @@ VescToOdom::VescToOdom(ros::NodeHandle nh, ros::NodeHandle private_nh) :
 
 void VescToOdom::vescStateCallback(const vesc_msgs::VescStateStamped::ConstPtr& state)
 {
+  
   // check that we have a last servo command if we are depending on it for angular velocity
   if (use_servo_cmd_ && !last_servo_cmd_)
     return;
 
-  // convert to engineering units
-  double current_speed = ( state->state.speed - speed_to_erpm_offset_ ) / speed_to_erpm_gain_;
+	// convert to engineering units
+	//Speed
+  double erpm_speed = state->state.speed;
+	if(abs(erpm_speed)<300)
+	{
+	erpm_speed=0;
+	}
+
+
+
+  double current_speed = ( erpm_speed - speed_to_erpm_offset_ ) / speed_to_erpm_gain_;
+
+	if(abs(current_speed) < 0.005 )
+	{
+	current_speed=0;
+	}
+
+	
+	//Angle
+
   double current_steering_angle(0.0), current_angular_velocity(0.0);
+
   if (use_servo_cmd_) {
-    current_steering_angle =
-      ( last_servo_cmd_->data - steering_to_servo_offset_ ) / steering_to_servo_gain_;
-    current_angular_velocity = current_speed * tan(current_steering_angle) / wheelbase_;
+    //current_steering_angle =
+      //( last_servo_cmd_->data - steering_to_servo_offset_ ) / steering_to_servo_gain_;
+
+	double numeric_angle=last_servo_cmd_->data;
+	if(numeric_angle<0.45)
+	{
+	current_steering_angle = (numeric_angle-0.45)*30/0.45;
+	}
+	else
+	{
+	current_steering_angle = (numeric_angle-0.45)*30/0.55;
+	}
+	current_steering_angle = -(current_steering_angle * 3.141592 ) / 180;
+
+  current_angular_velocity = current_speed * tan(current_steering_angle) / wheelbase_;
+
   }
+  ROS_INFO_ONCE("Message Received");
 
   // use current state as last state if this is our first time here
   if (!last_state_)
@@ -102,9 +136,12 @@ void VescToOdom::vescStateCallback(const vesc_msgs::VescStateStamped::ConstPtr& 
 
   // Position uncertainty
   /** @todo Think about position uncertainty, perhaps get from parameters? */
-  odom->pose.covariance[0]  = 0.2; ///< x
-  odom->pose.covariance[7]  = 0.2; ///< y
-  odom->pose.covariance[35] = 0.4; ///< yaw
+  odom->pose.covariance[0]  = 0.02; ///< x
+  odom->pose.covariance[7]  = 0.02; ///< y
+  odom->pose.covariance[35] = 0.04; ///< yaw
+  //odom->pose.covariance[21] = 0.4;
+  //odom->pose.covariance[28] = 0.4;
+  //odom->pose.covariance[35] = 0.4;
 
   // Velocity ("in the coordinate frame given by the child_frame_id")
   odom->twist.twist.linear.x = current_speed;
@@ -113,6 +150,13 @@ void VescToOdom::vescStateCallback(const vesc_msgs::VescStateStamped::ConstPtr& 
 
   // Velocity uncertainty
   /** @todo Think about velocity uncertainty */
+  odom->twist.covariance[0] = 0.002;
+  odom->twist.covariance[7] = 0.002;
+  //odom->twist.covariance[14] = 0.02;
+  //odom->twist.covariance[21] = 0.02;
+  //odom->twist.covariance[28] = 0.02;
+  odom->twist.covariance[35] = 0.002;
+
 
   if (publish_tf_) {
     geometry_msgs::TransformStamped tf;
